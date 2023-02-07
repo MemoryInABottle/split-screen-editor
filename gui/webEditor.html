@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>WebPad</title>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="author" content="Mark W&ouml;rdenweber" />
+		<meta name="description" content="A Web-Editor" />
+		<meta name="keywords" content="Web, Editor, HTML, CSS, JS" />
+		<style>
+			html{box-sizing: border-box;}
+			*, *:before, *:after{box-sizing: inherit;}
+			
+			body{
+				background:linear-gradient(to left, #404040FF, #606060FF);
+				width:100vw;
+				height:100vh;
+				margin:0;
+				padding:0;
+				overflow:hidden;
+			}
+			#webEditor_mainCanvas{
+				display:inline-block;
+				border:1px solid #000000FF;
+				box-shadow:4px 4px 4px black;
+				margin:20px;
+				width:calc(50% - 40px);
+				height:94%;
+				cursor:none;
+			}
+			#webEditor_htmlOutput{
+				display:inline-block;
+				margin:20px 20px 20px 10px;
+				width:calc(50% - 40px);
+				height:94%;
+				overflow:scroll;
+			}
+		</style>
+	</head>
+	<body>
+		<canvas id="webEditor_mainCanvas" tabindex="1"></canvas>
+		<div id="webEditor_htmlOutput"></div>
+		<input type="file" id="filedialog" hidden="hidden"/>
+		<script>
+		'use strict';
+			let webEditor={
+				editorDimensions:undefined,
+				//Currently Selected Line (0 = First Line)
+				selectedLine:0,
+				selectedLine_SubLine:0,
+				//Cursor / Caret Position
+				cursorPosition:0,
+				cursorPosition_Line:0,
+				//Top most line number that is shown (0 = First line)
+				lineOffset:0,
+				selection:{
+					start:undefined,
+					length:0,
+				},
+				code:{
+					text:'',
+					lines:[],
+				},
+				output:{
+					domElement:undefined,
+				},
+				sound:{
+					path:'Sounds/',
+          // Files from https://mixkit.co/free-sound-effects/typewriter/
+					files:['mixkit-mechanical-typewriter-single-hit-1382.ogg','mixkit-single-hit-on-typewriter-1380.ogg','mixkit-typewriter-hard-hit-1367.ogg','mixkit-typewriter-hit-1362.ogg','mixkit-typewriter-return-bell-1368.ogg','mixkit-typewriter-single-mechanical-hit-1384.ogg','mixkit-typewriter-soft-click-1125.ogg','mixkit-typewriter-soft-hit-1366.ogg'],
+					audio:[],
+					enabled:false,
+					loaded:false,
+					setUp:function(){
+						let numOf = webEditor.sound.files.length;
+							for(let i=0;i<numOf;i++){
+								webEditor.sound.audio[i]=new Audio(webEditor.sound.path+webEditor.sound.files[i]);
+							}
+						webEditor.sound.loaded=true;
+					},
+					st:0,
+					play:function(instruction){
+							if(!webEditor.sound.loaded || !webEditor.sound.enabled){
+								return;
+							}
+						let mySound;
+							switch(instruction){
+								case 'scroll-x':
+									mySound=webEditor.sound.audio[6];
+									break;
+								case 'scroll-y':
+									mySound=webEditor.sound.audio[3];
+									break;
+								case 'scroll':
+									mySound=webEditor.sound.audio[0];
+									break;
+								case 'space':
+									mySound=webEditor.sound.audio[1];
+									break;
+								case 'newline':
+									mySound=webEditor.sound.audio[4];
+									break;
+								case 'delete':
+									mySound=webEditor.sound.audio[2];
+									break;
+								case 'key':
+									mySound=webEditor.sound.audio[7];
+								default:
+							}
+							if(!mySound.ended){
+								mySound.pause();
+								mySound.currentTime=0;
+							}
+						mySound.play();
+					},
+				},
+				gui:{
+					lastMilliSeconds:0,
+					fps:{
+						tickindex:0,
+						ticksum:0,
+						ticklist:Array(100),
+						val:0,
+						calcAverageTick:function(newtick){
+							webEditor.gui.fps.ticksum-=(webEditor.gui.fps.ticklist[webEditor.gui.fps.tickindex]==undefined?0:webEditor.gui.fps.ticklist[webEditor.gui.fps.tickindex]);
+							webEditor.gui.fps.ticksum+=newtick;
+							webEditor.gui.fps.ticklist[webEditor.gui.fps.tickindex]=newtick;
+								if((webEditor.gui.fps.tickindex++)>=100){
+									webEditor.gui.fps.tickindex=0;
+								}
+							//m - Milliseconds past since last frame
+							//a - average of m
+							//1000 ms per second
+							//1000/a - frames per second
+							let fps=Math.ceil(1000/(webEditor.gui.fps.ticksum/100)*10)/10;
+							webEditor.gui.fps.val=fps<1?'':fps;
+						},
+					},
+					font:{
+						size:12,
+						width:-1,
+						family:'',
+					},
+					lines:{
+						height:-1,
+						numOf:-1,
+						numOfVisible:-1,
+						visibleLineOrder:[],
+						maxCharacter:-1,
+					},
+					offset:{
+						lineNumber:-1,
+						text:-1,
+					},
+					canvas:{
+						domElement:undefined,
+						getContext:function(){
+							return webEditor.gui.canvas.domElement.getContext('2d');
+						},
+						width:400,
+						height:300,
+					},
+					menu:{
+						data:[],
+						separator:'\u{205E}',
+						selectedMenu:-1,
+						at:function(x,y){
+								for(let i=0;i<webEditor.gui.menu.data.length;i++){
+									if(x>=webEditor.gui.menu.data[i].x && x<=webEditor.gui.menu.data[i].x+webEditor.gui.menu.data[i].width && y>=webEditor.gui.menu.data[i].y && y<=webEditor.gui.menu.data[i].y+webEditor.gui.menu.data[i].height){
+										return i;
+									}
+								}
+							return -1;
+						}
+					},
+				},
+				setUp: function(domElement_Canvas, domElement_HTMLOutput, width, height){
+					//Canvas
+					this.output.domElement=domElement_HTMLOutput;
+					this.gui.canvas.domElement=domElement_Canvas;
+						if(width == undefined && height == undefined){
+							let computed = window.getComputedStyle(domElement_Canvas);
+							width=computed.getPropertyValue('width');
+							width=parseInt(width.substr(0,width.length-2));
+							height=computed.getPropertyValue('height');
+							height=parseInt(height.substr(0,height.length-2));
+						}
+					this.gui.canvas.width=width;
+					this.gui.canvas.height=height;
+					domElement_Canvas.setAttribute('width', width);
+					domElement_Canvas.setAttribute('height', height);
+					
+					//GUI
+					this.gui.font.family=this.gui.font.size+'px Courier New';
+					this.gui.font.width=domElement_Canvas.getContext('2d').measureText('X').width;
+					this.editorDimensions=[2, this.gui.font.size/12*20, this.gui.canvas.width-2*2, this.gui.canvas.height-(this.gui.font.size/12*20+2)];
+					
+					this.gui.lines.height=this.gui.font.size*1.2;
+					this.gui.lines.numOf = Math.floor(this.editorDimensions[3]/this.gui.lines.height);
+					this.updateDynamicSettings();
+					this.gui.lines.maxCharacters=Math.floor((this.editorDimensions[2]-this.editorDimensions[0]-this.gui.offset.lineNumber)/(this.gui.font.width*1.05));
+					
+					//Menu
+					this.gui.menu.data=[{label:'New',unicode:'\u{1F4C4}', callback:function(){alert('New File');webEditor.gui.menu.selectedMenu=-1;}},{label:'Save',unicode:'\u{1F4BE}',callback:function(){alert('Save File');webEditor.gui.menu.selectedMenu=-1;}},{label:'Open', unicode:'\u{1F4C1}',callback:function(){document.getElementById('filedialog').click();webEditor.gui.menu.selectedMenu=-1;}},{label:'Run', unicode:'\u{1F504}',callback:function(){webEditor.commands.runOutput();webEditor.gui.menu.selectedMenu=-1;}},{label:'Settings', unicode:'\u{1F527}',callback:function(){alert('Settings');webEditor.gui.menu.selectedMenu=-1;}}];
+					
+					//Sound
+					webEditor.sound.setUp();
+					webEditor.sound.enabled=false;
+					
+					//Add ActionListeners
+					domElement_Canvas.addEventListener('click', webEditor.processInput.mouse.click, true);
+					domElement_Canvas.addEventListener('mousemove', webEditor.processInput.mouse.move, true);
+					domElement_Canvas.addEventListener('wheel', webEditor.processInput.mouse.wheel, true);
+					/*domElement_Canvas.addEventListener('touchmove', webEditor.processInput.touch.move, true);
+					domElement_Canvas.addEventListener('touchend', webEditor.processInput.touch.end, true);
+					domElement_Canvas.addEventListener('touchcancel', webEditor.processInput.touch.cancel, true);*/
+					domElement_Canvas.addEventListener('keydown', webEditor.processInput.key.down, true);
+					domElement_Canvas.addEventListener('keyup', webEditor.processInput.key.up, true);
+					//domElement_Canvas.addEventListener('keypress', webEditor.processInput.key.press, true);
+					domElement_Canvas.focus();
+				},
+				updateDynamicSettings: function(){
+					this.gui.lines.numOfVisible=this.gui.lines.numOf;
+					this.gui.offset.lineNumber=(this.lineOffset+this.gui.lines.numOf+'').length*this.gui.font.width*1.8;
+					this.gui.offset.text=this.editorDimensions[0]+this.gui.offset.lineNumber+this.gui.font.width;
+				},
+
+				paintImage: function(){
+					//TODO: Split into two functions: paintBG & paintFG
+					let ctx = webEditor.gui.canvas.getContext();
+					let milliSeconds=new Date().getTime();
+
+					//Dynamic Settings
+					webEditor.updateDynamicSettings();
+					
+					//background
+					ctx.font=webEditor.gui.font.family;
+					ctx.fillStyle='#D0D0D0FF';
+					ctx.fillRect(0,0,webEditor.gui.canvas.width, webEditor.gui.canvas.height);
+					
+					//Editor
+					ctx.fillStyle='#000000FF';
+					ctx.fillRect(webEditor.editorDimensions[0]+webEditor.gui.offset.lineNumber,webEditor.editorDimensions[1],webEditor.editorDimensions[2]-webEditor.gui.offset.lineNumber, webEditor.editorDimensions[3]);
+					
+					//Editor - Line Numbers & Code
+					ctx.fillStyle='#404040FF';
+					ctx.fillRect(webEditor.editorDimensions[0],webEditor.editorDimensions[1],webEditor.gui.offset.lineNumber,webEditor.editorDimensions[3]);
+					let currentLine, currentLineNumber=webEditor.lineOffset+1, skipLine=0, skipLineMax=0, printedLines=0, maxPrintedLines=webEditor.gui.lines.numOfVisible;
+						for(let i=0;i<webEditor.gui.lines.numOf;i++){
+							//Selection
+								if(currentLineNumber==webEditor.selectedLine+1 && webEditor.selection.length>0){ //TODO: Add Multiline Support
+									ctx.fillStyle='#4040FFFF';
+									ctx.fillRect(webEditor.gui.offset.text+webEditor.gui.font.width*webEditor.cursorPosition, webEditor.editorDimensions[1]+i*webEditor.gui.lines.height+2, webEditor.gui.font.width*webEditor.selection.length, webEditor.gui.lines.height);
+								}
+							//Selected Line
+								if(currentLineNumber+(skipLine>0?-1:0)==webEditor.selectedLine+1){ //TODO: Add Multiline Support
+									//Highlight selected Line
+									ctx.fillStyle='#A0A0A060';
+									ctx.fillRect(webEditor.editorDimensions[0]+webEditor.gui.offset.lineNumber, webEditor.editorDimensions[1]+i*webEditor.gui.lines.height+2, webEditor.editorDimensions[2]-webEditor.gui.offset.lineNumber-webEditor.gui.font.width, webEditor.gui.lines.height);
+								}
+							//Cursor / Caret
+								if(currentLineNumber+(skipLine>0?-1:0)==webEditor.selectedLine+1 && skipLineMax-skipLine==webEditor.selectedLine_SubLine){
+									if(milliSeconds%800<400){
+										ctx.fillStyle='#FFFFFFFF';
+										ctx.fillRect(webEditor.gui.offset.text+webEditor.gui.font.width*webEditor.cursorPosition, webEditor.editorDimensions[1]+i*webEditor.gui.lines.height+2, 1, webEditor.gui.lines.height);
+									}
+								}
+								if(skipLine>0){
+									skipLine--;
+									webEditor.gui.lines.numOfVisible--;
+									continue;
+								}else{
+									skipLineMax=0;
+								}
+								if(currentLineNumber<1 || currentLineNumber>webEditor.code.lines.length){
+									continue;
+								}
+							
+							//Code & Line Numbers
+								if(webEditor.code.lines.length>=currentLineNumber){
+									currentLine=webEditor.code.lines[currentLineNumber-1];
+										if(currentLine.length>webEditor.gui.lines.maxCharacters){
+											currentLine=currentLine.match(new RegExp('.{1,' + webEditor.gui.lines.maxCharacters + '}', 'g'));
+											skipLine=currentLine.length-1;
+											skipLineMax=skipLine+1;
+										}else{
+											currentLine=[currentLine];
+										}
+									let regex=/<([\S>]+)([^>]*)?>([^<]*)?(<\/([^>]+)>)?/g;
+										if(printedLines+currentLine.length<=maxPrintedLines){ //Only print if it fits
+											//Line Number
+											ctx.fillStyle='#A0A0A0FF';
+											ctx.fillText(currentLineNumber+'',webEditor.editorDimensions[0]+webEditor.gui.font.width, webEditor.editorDimensions[1]+(i+1)*webEditor.gui.lines.height-1);
+												for(let line=0;line<currentLine.length;line++){
+													webEditor.gui.lines.visibleLineOrder[i+line]=[currentLineNumber-1, line];
+													ctx.fillStyle=regex.test(currentLine[line])?'#C0C020FF':'#FF6000FF';
+													ctx.fillText(currentLine[line], webEditor.gui.offset.text, webEditor.editorDimensions[1]+(line+i+1)*webEditor.gui.lines.height-1);
+													printedLines++;
+												}
+										}
+								}
+							currentLineNumber++;
+						}
+					//console.table(webEditor.gui.lines.visibleLineOrder);
+					//Scrollbar
+					ctx.fillStyle='#B0B0B0FF';
+					ctx.fillRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1],webEditor.gui.font.size,webEditor.editorDimensions[3]);
+					ctx.lineWidth=0.5;
+					ctx.fillStyle='#000000FF';
+					ctx.strokeRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1],webEditor.gui.font.size,webEditor.editorDimensions[3]);
+					
+					//Scrollbar - Percentile
+					let scrollBarY1=Math.max(0,webEditor.lineOffset/webEditor.code.lines.length), scrollBarY2= 1-Math.min(1,(webEditor.code.lines.length-webEditor.lineOffset-webEditor.gui.lines.numOf)/webEditor.code.lines.length), scrollBarY=webEditor.editorDimensions[3]-webEditor.editorDimensions[1]-2*webEditor.gui.font.size;
+					scrollBarY2=scrollBarY2-scrollBarY1;
+					
+					ctx.fillStyle='#E0E0E0FF';
+					ctx.fillRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1]+webEditor.gui.font.size+scrollBarY1*scrollBarY,webEditor.gui.font.size,scrollBarY2*scrollBarY);
+					ctx.lineWidth=0.5;
+					ctx.fillStyle='#000000FF';
+					ctx.strokeRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1]+webEditor.gui.font.size+scrollBarY1*scrollBarY,webEditor.gui.font.size,scrollBarY2*scrollBarY);
+					ctx.fillStyle='#000000FF';
+					
+					//Scrollbar - ArrowUp
+					ctx.fillStyle='#D0D0D0FF';
+					ctx.fillRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1],webEditor.gui.font.size,webEditor.gui.font.size);
+					ctx.lineWidth=0.5;
+					ctx.fillStyle='#000000FF';
+					ctx.strokeRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1],webEditor.gui.font.size,webEditor.gui.font.size);
+					ctx.fillStyle='#000000FF';
+					ctx.lineWidth=1;
+					ctx.beginPath();
+					ctx.moveTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/4, webEditor.editorDimensions[1]+webEditor.gui.font.size/4*3);
+					ctx.lineTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/2, webEditor.editorDimensions[1]+webEditor.gui.font.size/4);
+					ctx.lineTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/4*3, webEditor.editorDimensions[1]+webEditor.gui.font.size/4*3);
+					ctx.lineTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/4, webEditor.editorDimensions[1]+webEditor.gui.font.size/4*3);
+					ctx.fill();
+					
+					//Scrollbar - ArrowDown
+					ctx.fillStyle='#D0D0D0FF';
+					ctx.fillRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1]+webEditor.editorDimensions[3]-webEditor.gui.font.size,webEditor.gui.font.size,webEditor.gui.font.size);
+					ctx.lineWidth=0.5;
+					ctx.fillStyle='#000000FF';
+					ctx.strokeRect(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size,webEditor.editorDimensions[1]+webEditor.editorDimensions[3]-webEditor.gui.font.size,webEditor.gui.font.size,webEditor.gui.font.size);
+					ctx.fillStyle='#000000FF';
+					ctx.lineWidth=1;
+					ctx.beginPath();
+					ctx.moveTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/4, webEditor.editorDimensions[1]+webEditor.editorDimensions[3]-webEditor.gui.font.size/4*3);
+					ctx.lineTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/2, webEditor.editorDimensions[1]+webEditor.editorDimensions[3]-webEditor.gui.font.size/4);
+					ctx.lineTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/4*3, webEditor.editorDimensions[1]+webEditor.editorDimensions[3]-webEditor.gui.font.size/4*3);
+					ctx.lineTo(webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size/4, webEditor.editorDimensions[1]+webEditor.editorDimensions[3]-webEditor.gui.font.size/4*3);
+					ctx.fill();
+					
+					//Editor - Border
+					ctx.fillStyle='#D0D0D0FF';
+					ctx.strokeRect(webEditor.editorDimensions[0],webEditor.editorDimensions[1],webEditor.editorDimensions[2], webEditor.editorDimensions[3]);
+					
+					//Menubar
+					let menuOffset=webEditor.gui.font.width, menuLength, menuLabel;
+						for(let i=0;i<webEditor.gui.menu.data.length;i++){
+							menuLabel=webEditor.gui.menu.data[i].unicode+' '+webEditor.gui.menu.data[i].label;
+							menuLength=webEditor.gui.font.width*menuLabel.length;
+							
+								if(webEditor.gui.menu.selectedMenu==i){
+									ctx.fillStyle='#C0C0C0FF';
+									ctx.fillRect(webEditor.editorDimensions[0]+menuOffset-webEditor.gui.font.size*0.25, webEditor.editorDimensions[1]-webEditor.gui.lines.height*1.2, menuLength+webEditor.gui.font.size*0.5, webEditor.gui.lines.height);
+									ctx.fillStyle='#FFFFFF50';
+									ctx.lineWidth=0.5;
+									ctx.strokeRect(webEditor.editorDimensions[0]+menuOffset-webEditor.gui.font.size*0.25, webEditor.editorDimensions[1]-webEditor.gui.lines.height*1.2, menuLength+webEditor.gui.font.size*0.5, webEditor.gui.lines.height);
+								}
+							
+							ctx.fillStyle='#000000FF';
+							ctx.fillText(menuLabel, webEditor.editorDimensions[0]+menuOffset, webEditor.editorDimensions[1]-webEditor.gui.lines.height*0.4);
+							
+							webEditor.gui.menu.data[i].width=ctx.measureText(menuLabel).width;
+							webEditor.gui.menu.data[i].height=webEditor.editorDimensions[1];
+							webEditor.gui.menu.data[i].x=webEditor.editorDimensions[0]+menuOffset;
+							webEditor.gui.menu.data[i].y=0;
+							
+								if(i>0){
+									ctx.fillStyle='#00000050';
+									ctx.fillText(webEditor.gui.menu.separator, webEditor.editorDimensions[0]+menuOffset-webEditor.gui.font.size, webEditor.editorDimensions[1]-webEditor.gui.lines.height*0.4);
+								}
+							menuOffset+=menuLength+webEditor.gui.font.width*2;
+						}
+					//FPS
+					ctx.fillStyle='#000000FF';
+					ctx.fillText('FPS: '+webEditor.gui.fps.val, webEditor.editorDimensions[0]+menuOffset, webEditor.editorDimensions[1]-webEditor.gui.lines.height*0.4);
+					//Mouse
+					webEditor.processInput.mouse.drawCursor(ctx);
+					
+					//Watermark
+						if(false){
+							ctx.save();
+							ctx.translate(webEditor.editorDimensions[2]/2, webEditor.editorDimensions[3]/2);
+							ctx.rotate(320*Math.PI/180);
+							ctx.textAlign='center';
+							let fontSize=Math.trunc(webEditor.editorDimensions[2]/9);
+							ctx.font=fontSize+'px serif';
+							ctx.fillStyle='#FFFFFF50';
+							ctx.strokeStyle='#00000050';
+							ctx.fillText('MemoryInABottle',0,-fontSize*2);
+							ctx.fillText('MemoryInABottle',0,0);
+							ctx.fillText('MemoryInABottle',0,fontSize*2);
+							ctx.lineWidth=2;
+							ctx.strokeText('MemoryInABottle',0,-fontSize*2);
+							ctx.strokeText('MemoryInABottle',0,0);
+							ctx.strokeText('MemoryInABottle',0,fontSize*2);
+							ctx.restore();
+						}
+					
+					
+					//Refresh
+					webEditor.gui.fps.calcAverageTick(milliSeconds-webEditor.gui.lastMilliSeconds);
+					webEditor.gui.lastMilliSeconds=milliSeconds;
+					window.requestAnimationFrame(webEditor.paintImage);
+				},
+				commands:{
+					jumpToLine:function(lineNumber){
+						webEditor.lineOffset=lineNumber;
+						webEditor.selectedLine=lineNumber;
+					},
+					jumpToLineIfNotVisible:function(lineNumber){
+						if(lineNumber==undefined){
+							lineNumber=webEditor.selectedLine;
+						}
+						if(webEditor.lineOffset>lineNumber || webEditor.lineOffset+webEditor.gui.lines.numOfVisible<lineNumber){
+							webEditor.commands.jumpToLine(lineNumber);
+						}
+					},
+					gotoLineAndPlace:function(lineNumber, caret){
+					//Places selectedLine, subLine and Cursor
+							if(caret==undefined){caret=webEditor.cursorPosition;}
+						let sL=webEditor.gui.lines.visibleLineOrder[lineNumber];
+						webEditor.selectedLine=sL[0];
+						webEditor.selectedLine_SubLine=sL[1];
+						webEditor.cursorPosition=Math.min(webEditor.code.lines[webEditor.selectedLine].length, caret);
+					},
+					openFile: async function(filename){
+						let utf8Decoder = new TextDecoder('utf-8');
+						let response = await fetch(filename);
+						let reader = response.body.getReader();
+						let {value: chunk, done: readerDone } = await reader.read();
+						let fileContents='';
+						webEditor.code.lines=[];
+							while(!readerDone){
+								fileContents+=(utf8Decoder.decode(chunk));
+								({value: chunk, done: readerDone } = await reader.read());
+							}
+						webEditor.code.lines=fileContents.split(/\r?\n/g);
+						//webEditor.commands.jumpToLine(190+4);
+						webEditor.paintImage();
+					},
+					runOutput: function(){
+						webEditor.output.domElement.innerHTML=webEditor.code.lines.join('\n');
+					},
+				},
+				processInput:{
+					mouse:{
+						cursor:[-50,-50], //Mouse cursor Position
+						cursor_innerGradient:undefined,
+						cursor_outerGradient:undefined,
+						drawCursor:function(ctx){
+							ctx.save();
+							//Mouse Shadow
+							ctx.shadowOffsetX = 2;
+							ctx.shadowOffsetY = 2;
+							ctx.shadowColor = 'rgba(0,0,0,0.8)';
+							ctx.shadowBlur = 5;
+							
+							//Add White to Black Gradient for Stroke (From Tip)
+							//Add Black to White Gradient for Fill (From Tip)
+							let x=webEditor.processInput.mouse.cursor[0]+1, y=webEditor.processInput.mouse.cursor[1]+2;
+							let innerGradient=ctx.createLinearGradient(x, y, x+12, y+11);
+							innerGradient.addColorStop(0, '#000000FF');
+							innerGradient.addColorStop(0.4, '#00000040');
+							innerGradient.addColorStop(1, '#FFFFFF40');
+							let outerGradient=ctx.createLinearGradient(x, y, x+12, y+11);
+							outerGradient.addColorStop(0, '#FFFFFFFF');
+							outerGradient.addColorStop(0.5, '#505050FF');
+							outerGradient.addColorStop(1, '#FFFFFFFF');
+							
+							//Add a Little Shine
+							let shineMillis=webEditor.gui.lastMilliSeconds%5000;
+								if(shineMillis<500){
+									innerGradient.addColorStop((shineMillis%500+1)/500, '#FFFFFF80');
+								}
+							
+							ctx.beginPath();
+							ctx.moveTo(x,y);
+							x+=14; y+=15;
+							ctx.lineTo(x,y);
+							x+=-10; y+=8;
+							ctx.lineTo(x,y);
+							x+=-4; y+=-23;
+							ctx.lineTo(x,y);
+							ctx.closePath();
+							
+							ctx.fillStyle=innerGradient;//'#00000090';
+							ctx.strokeStyle='#000000FF';
+							ctx.lineWidth=2;
+							ctx.stroke();
+							
+							ctx.strokeStyle=outerGradient;//'#FFFFFFFF';
+							ctx.lineWidth=1;
+							ctx.stroke();
+							ctx.fill();
+							
+							/*ctx.fillStyle='#FFFFFF40';
+							ctx.fill();*/
+							
+							ctx.restore();
+						},
+						click: function(e){
+							e.preventDefault();
+								if(e.button==0){ //Left BUtton
+									let cX=e.offsetX, cY=e.offsetY;
+									let area='';
+										if(cY<webEditor.editorDimensions[1]){
+											//MenuClicked
+											let menu = webEditor.gui.menu.at(cX,cY);
+												if(menu>=0){
+													webEditor.gui.menu.data[menu].callback();
+												}
+										}else if(cX>=webEditor.gui.offset.text && cX<=webEditor.editorDimensions[0]+webEditor.editorDimensions[2]-webEditor.gui.font.size && cY>=webEditor.editorDimensions[1] && cY<=webEditor.editorDimensions[1]+webEditor.editorDimensions[3]){
+											//Clicked on a code Line
+											let approximatedSelectedLine=Math.floor((cY-webEditor.editorDimensions[1])/webEditor.gui.lines.height), approximatedCaret=Math.round((cX-webEditor.gui.offset.text)/webEditor.gui.font.width);
+												if(approximatedSelectedLine<webEditor.gui.lines.visibleLineOrder.length){
+												//TODO:Throw all the keyPress and Click Methods into webEditor.commands
+													webEditor.commands.gotoLineAndPlace(approximatedSelectedLine, approximatedCaret);
+												}
+										}else{
+											console.log('Clicked @('+cX+' | '+cY+')');
+										}
+								}else if(e.button==1){ //In my configuration[Firefox 92 / Win7] this doesn't get called. FIX: Test if this is normal behaviour
+									alert('Right button');
+								}
+						},
+						dblclick: function(e){
+							//Double Click on a code word and it get's selected
+						},
+						move: function(e){
+							let cX=e.offsetX, cY=e.offsetY;
+								if(cY<webEditor.editorDimensions[1]+webEditor.gui.font.size){
+									//MenuHover
+									webEditor.gui.menu.selectedMenu=webEditor.gui.menu.at(cX,cY);
+								}
+							//console.log('Clicked on:', area);
+							webEditor.processInput.mouse.cursor=[cX,cY];
+						},
+						wheel: function(e){
+							if(e.deltaX!=0){ //Acts as left/right arrow key
+								webEditor.processInput.key.down({keyCode:e.deltaX<0?37:39, key:e.deltaX<0?'ArrowLeft':'ArrowRight', ctrlKey:false, shiftKey:false, altKey:false, preventDefault:function(){}, metaKey:'simulated'});
+							}
+							if(e.deltaY!=0){ //Acts as ctrl + up/down arrow key
+								let myKeyEvent = {keyCode:e.deltaY<0?38:40, key:e.deltaY<0?'ArrowUp':'ArrowDown', ctrlKey:true, shiftKey:false, altKey:false, preventDefault:function(){}, metaKey:'simulated'};
+								let scrollTimes=Math.abs(Math.trunc(e.deltaY/3));
+									for(let i=0;i<scrollTimes;i++){
+										webEditor.processInput.key.down(myKeyEvent);
+									}
+							}
+						}
+					},
+					touch:{
+						indexOf:function(touchObj){
+							let touchList=webEditor.processInput.touch.currentTouches;
+								for(let i=0;i<touchList.length;i++){
+									if(touchList[i].id==touchObj.identifier){
+										return i;
+									}
+								}
+							return -1;
+						},
+						contains:function(touchObj){
+							return webEditor.processInput.touch.indexOf(touchObj)>=0;
+						},
+						add:function(touchObj){
+							webEditor.processInput.touch.currentTouches.push({id:touchObj.identifier, x:touchObj.screenX, y:touchObj.screenY, relX:0, relY:0, direction:undefined});
+						},
+						remove:function(touchObj){
+							let index = webEditor.processInput.touch.indexOf(touchObj);
+								if(index==0){
+									webEditor.processInput.touch.currentTouches.shift();
+								}else if(index==webEditor.processInput.touch.currentTouches.length-1){
+									webEditor.processInput.touch.currentTouches.pop();
+								}else{
+									webEditor.processInput.touch.currentTouches=webEditor.processInput.touch.currentTouches.slice(0, index).concat(webEditor.processInput.touch.currentTouches.slice(index+1));
+								}
+						},
+						generalDirection:function(){
+							let rX=0,rY=0;
+								for(let i=0;i<webEditor.processInput.touch.currentTouches.length;i++){
+									rX+=webEditor.processInput.touch.currentTouches[i].relX;
+									rY+=webEditor.processInput.touch.currentTouches[i].relY;
+								}
+							return [rX,rY, Math.abs(rX)>Math.abs(rY)?'x':'y'];
+						},
+						toString:function(){
+							let list=[];
+								for(let i=0;i<webEditor.processInput.touch.currentTouches.length;i++){
+									list.push(webEditor.processInput.touch.currentTouches[i].id+': ('+webEditor.processInput.touch.currentTouches[i].relX+' | '+webEditor.processInput.touch.currentTouches[i].relY+') => '+webEditor.processInput.touch.currentTouches[i].direction);
+								}
+							list.push('General Direction: '+webEditor.processInput.touch.generalDirection().join(', '));
+							webEditor.code.lines=[];
+							webEditor.code.lines=list;
+						},
+						currentTouches:[],
+						cancel:function(e){
+							webEditor.processInput.touch.end(e);
+						},
+						end:function(e){
+							for(let i=0;i<e.changedTouches.length;i++){
+								webEditor.processInput.touch.remove(curTouch);
+							}
+						},
+						move:function(e){
+							e.preventDefault();
+								for(let i=0;i<e.changedTouches.length;i++){
+									let curTouch=e.changedTouches[i];
+									let touchID=webEditor.processInput.touch.indexOf(curTouch);
+										if(touchID==-1){
+											//Add Touch
+											webEditor.processInput.touch.add(curTouch);
+										}else{
+											//Calculate Difference
+											let myTouch=webEditor.processInput.touch.currentTouches[touchID];
+											myTouch.relX=curTouch.screenX-myTouch.x;
+											myTouch.relY=curTouch.screenY-myTouch.y;
+											myTouch.x=curTouch.screenX;
+											myTouch.y=curTouch.screenY;
+											myTouch.direction=Math.abs(myTouch.relX)>Math.abs(myTouch.relY)?'x':'y';
+										}
+								}
+								switch(e.changedTouches.length){
+									case 3: // Three Fingers - Font-Size
+										break;
+									case 2: // Two Fingers - Scroll
+										let direction=webEditor.processInput.touch.generalDirection();
+											if(direction[2]=='x'){
+												webEditor.processInput.key.down({keyCode:Math.sign(direction[0])<0?37:39, key:Math.sign(direction[0])<0?'ArrowLeft':'ArrowRight', ctrlKey:false, shiftKey:false, altKey:false, preventDefault:function(){}, metaKey:'simulated'});
+											}else{
+												webEditor.processInput.key.down({keyCode:Math.sign(direction[1])<0?38:40, key:Math.sign(direction[0])<0?'ArrowUp':'ArrowDown', ctrlKey:true, shiftKey:false, altKey:false, preventDefault:function(){}, metaKey:'simulated'});
+											}
+										break;
+									default: // One Finger
+								}
+						},
+					},
+					key:{
+						lastPressed:undefined,
+						map:{}, //Currently pressed keys
+						down:function(e){
+							e.preventDefault();
+							let dealWithSelection=true, curLine;
+								switch(e.key){
+									case 'PageUp':
+									case 'PageDown':
+										webEditor.lineOffset=Math.max(0, Math.min(webEditor.lineOffset+webEditor.gui.lines.numOfVisible*(e.key=='PageDown'?1:-1), webEditor.code.lines.length-1));
+										webEditor.selectedLine=Math.max(0, Math.min(webEditor.selectedLine+webEditor.gui.lines.numOfVisible*(e.key=='PageDown'?1:-1), webEditor.code.lines.length-1));
+										webEditor.commands.jumpToLineIfNotVisible();
+										
+										webEditor.sound.play('scroll-y');
+										break;
+									case 'End':
+									case 'Home': //Pos1
+										//TODO: Toggle space offset if repeatedly pressed
+										webEditor.cursorPosition=e.key=='Home'?0:webEditor.code.lines[webEditor.selectedLine].length;
+										webEditor.commands.jumpToLineIfNotVisible();
+										
+										webEditor.sound.play('scroll-x');
+										break;
+									case 'ArrowUp':
+									case 'ArrowDown':
+											if(e.ctrlKey){ //Strg / Control Key moves LineOffset
+												webEditor.lineOffset=Math.max(0, Math.min(webEditor.lineOffset+(e.key=='ArrowDown'?1:-1), webEditor.code.lines.length-1));
+												break;
+											}
+										webEditor.selectedLine=Math.max(0, Math.min(webEditor.selectedLine+(e.key=='ArrowDown'?1:-1), webEditor.code.lines.length-1));
+											/*if(webEditor.selectedLine<webEditor.lineOffset){
+												webEditor.lineOffset--;
+											}else if(webEditor.selectedLine>=webEditor.lineOffset+webEditor.gui.lines.numOfVisible){
+												webEditor.lineOffset++;
+											}*/
+										webEditor.commands.jumpToLineIfNotVisible();
+										
+										webEditor.sound.play('scroll-y');
+										break;
+									case 'ArrowLeft':
+									case 'ArrowRight':
+										//Move Cursor / Caret to the left or right
+										webEditor.cursorPosition+=(e.key=='ArrowRight'?1:-1);
+											if(webEditor.cursorPosition<0){ // Move to previous Line
+												if(webEditor.selectedLine<1){ //No earlier Line - Reset
+													webEditor.cursorPosition+=1;
+												}else{
+													webEditor.selectedLine--;
+													webEditor.cursorPosition=webEditor.code.lines[webEditor.selectedLine].length;
+													webEditor.lineOffset=Math.min(webEditor.lineOffset, webEditor.selectedLine);
+												}
+											}else if(webEditor.cursorPosition>webEditor.code.lines[webEditor.selectedLine].length){ // Move to next Line
+												if(webEditor.selectedLine>=webEditor.code.lines.length-1){ //No later Line - Reset
+													webEditor.cursorPosition-=1;
+												}else{
+													webEditor.selectedLine++;
+													webEditor.cursorPosition=0;
+														if(webEditor.selectedLine>=webEditor.lineOffset+webEditor.gui.lines.numOfVisible){
+															webEditor.lineOffset++;
+														}
+												}
+											}
+											if(e.shiftKey){ // Modify Selection
+												//T
+											}else{
+												webEditor.selection.start=undefined;
+												webEditor.selection.length=0;
+											}
+										webEditor.commands.jumpToLineIfNotVisible();
+										
+										webEditor.sound.play('scroll-x');
+										break;
+									case 'Delete':
+									case 'Backspace':
+										//TODO: Check behaviour when clearing the whole code
+										curLine=webEditor.code.lines[webEditor.selectedLine];
+											if(e.key=='Backspace' && webEditor.selectedLine>0 && webEditor.cursorPosition==0){
+												//Summarise previous Line with currentLine
+												webEditor.cursorPosition=webEditor.code.lines[webEditor.selectedLine-1].length;
+												curLine=webEditor.code.lines[webEditor.selectedLine-1]+curLine;
+												webEditor.code.lines.splice(webEditor.selectedLine-1,2,curLine);
+												webEditor.selectedLine--;
+											}else if(e.key=='Delete' && webEditor.selectedLine<webEditor.code.lines.length-1 && webEditor.cursorPosition>curLine.length-1){
+												//Summarise next Line with currentLine
+												curLine=curLine+webEditor.code.lines[webEditor.selectedLine+1];
+												webEditor.code.lines.splice(webEditor.selectedLine,2,curLine);
+											}else /*if((e.key=='Backspace' && webEditor.selectedLine>=0)||(e.key=='Delete' && webEditor.selectedLine<=webEditor.code.lines.length-1))*/{
+												webEditor.code.lines[webEditor.selectedLine]=curLine.substr(0,webEditor.cursorPosition+(e.key=='Backspace'?-1:0))+curLine.substr(webEditor.cursorPosition+(e.key=='Delete'?1:0));
+												webEditor.cursorPosition=Math.min(Math.max(0, webEditor.cursorPosition+(e.key=='Backspace'?-1:0)),webEditor.code.lines[webEditor.selectedLine].length);
+											}
+										/*webEditor.code.lines[webEditor.selectedLine]=curLine;
+										webEditor.cursorPosition++;*/
+										
+										webEditor.sound.play('delete');
+										break;
+									case 'Enter':
+										curLine=webEditor.code.lines[webEditor.selectedLine];
+										webEditor.code.lines.splice(webEditor.selectedLine,1,curLine.substr(0,webEditor.cursorPosition),curLine.substr(webEditor.cursorPosition));
+										webEditor.selectedLine++;
+										webEditor.cursorPosition=0;
+										webEditor.sound.play('newline');
+										break
+									case 'F5':
+										//TODO: Ask whether Reload should actually be made
+										//TODO: Ask for save
+										window.location.reload(e.ctrlKey); //F5 Refresh from Cache, Ctrl+F5 Refresh from Server
+										break;
+									case 'Dead':
+									case undefined:
+										break;
+									default:
+										dealWithSelection=false;
+											if(e.key=='r' && e.ctrlKey){ //Ctrl+R - Refresh
+												//alert(JSON.stringify(webEditor.processInput.key.map));
+												window.location.reload(true); //Refresh from Server
+												break;
+											}
+											if(e.keyCode<32){ //Control Character
+												//console.log(e.key);
+											}else{ //Printable Character
+												//console.log(e);
+												curLine=webEditor.code.lines[webEditor.selectedLine];
+													if(webEditor.cursorPosition==0){
+														curLine=e.key+curLine;
+													}else if(webEditor.cursorPosition>=curLine.length-1){
+														curLine+=e.key;
+													}else{
+														curLine=curLine.substr(0,webEditor.cursorPosition)+e.key+curLine.substr(webEditor.cursorPosition);
+													}
+												webEditor.code.lines[webEditor.selectedLine]=curLine;
+												webEditor.cursorPosition++;
+										
+												webEditor.sound.play('key');
+											}
+								}
+								if(dealWithSelection){
+									if(e.shiftKey){ // Modify Selection
+										//TODO: Selection
+									}else{
+										webEditor.selection.start=undefined;
+										webEditor.selection.length=0;
+									}
+								}
+								if(e.metaKey!=='simulated'){
+									webEditor.processInput.key.map[e.key]=true;
+								}
+							webEditor.processInput.key.lastPressed=e.key;
+						},
+						up:function(e){
+							webEditor.processInput.key.map[e.key]=false;
+						},
+						press:function(e){
+							console.log(e);
+						},
+					},
+				},
+			};
+			webEditor.setUp(document.getElementById('webEditor_mainCanvas'), document.getElementById('webEditor_htmlOutput')/*, window.innerWidth-40, window.innerHeight-40*/);
+      
+			//webEditor.commands.openFile('test1.html');
+			
+			
+			
+			//TODO: Selection
+			//TODO: Tabs - Editing Multiple Files
+			//TODO: Project-Page - Loads all files of a project and displays them in a hierachy / tree-map. Dependency Map?
+			
+			/*
+			WebEditor:
+				JS, PHP Function Parser & File Dependency
+				Scans all files in Project Folder and Dependencies
+				Scans for function definitions and Comments
+				Displays them in IntelliSense Fashion
+
+				Minimises Code and Obscures it
+			*/
+		</script>
+	</body>
+</html>
