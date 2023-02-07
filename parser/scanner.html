@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Scanner</title>
+		<meta charset="UTF-8" />
+		<meta name="author" content="Mark W&ouml;rdenweber" />
+		<meta name="description" content="" />
+		<meta name="keywords" content="" />
+		<script src="interpretCode.js"></script>
+		<script src="language.js"></script>
+		<style>
+			html{box-sizing: border-box;}
+			*, *:before, *:after{box-sizing: inherit;}
+			
+			#myOutput{
+				background-color:black;
+				padding:0.8em;
+				color:white;
+				font-family:monospace;
+			}
+			#myOutput .block{
+				margin-left:1em;
+			}
+			#myOutput .statement{
+				margin-left:1em;
+			}
+			#myOutput span{
+				color:orange;
+			}
+			#myOutput span.selected{
+				background-color:green;
+			}
+			#myOutput span.bracket, #myOutput span.definition, #myOutput span.delimiter, #myOutput span.logic, #myOutput span.operator{
+				color:grey;
+			}
+			#myOutput span.number{
+				color:red;
+			}
+			#myOutput span.parameter{
+				font-style:italic;
+			}
+			#myOutput span.reservedword{
+				color:yellow;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.keyword{
+				color:yellow;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.htmlword{
+				color:lightblue;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.attribute{
+				color:red;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.variable{
+				color:pink;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.comment{
+				color:darkgreen;
+				text-shadow: 1px 1px 2px black;
+				font-style:italic;
+			}
+			#myOutput span.documentation{
+				color:purple;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.string{
+				color:lightgreen;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.regex{
+				color:blue;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.function_name{
+				color:#00D0D0;
+				text-shadow: 1px 1px 2px black;
+			}
+			#myOutput span.comma, #myOutput span.eol{ /*End Of Line*/
+				color:grey;
+				text-shadow: 1px 1px 2px black;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="webImport"><input type="file" accept=".htm,.html,.js,.css,.php,.svg" /></div>
+		<div id="myOutput"></div>
+		<script>
+			'use strict';
+				function testJSFromFile(evt){
+					let res = testJS(evt.target.result);
+					console.log('File Contents:');
+					console.log(evt.target.result);
+					console.log('testJS');
+					console.log(res);
+					document.getElementById('myOutput').innerHTML=JSON.stringify(res);
+				}
+				function testJS(code){
+					return SSE.interpreter.parseJS("<script>"+code+"<\/script>");
+				}
+				function fancyWordTypePlease(word, additionalValues){
+					let ret = SSE.interpreter.JS_AddIfSpecialWord(word, 'class', [undefined, 'htmlword', 'keyword', 'reservedword']);
+						if(additionalValues!=undefined){
+							ret=ret.length==0?' class="'+additionalValues+'"':ret.substr(0,ret.length-1)+' '+additionalValues+'"';
+						}
+					return (ret.length==0?'':' ')+ret;
+				}
+				function fancyfy(jsCodeObj, newLine=true, varStorage={}){
+						if(!Array.isArray(jsCodeObj)){
+							return fancyfy([jsCodeObj], newLine, varStorage);
+						}
+					let ret='';
+						for(let i=0;i<jsCodeObj.length;i++){
+							obj=jsCodeObj[i];
+							html='';
+							let parameterArr, parameter, documentedParameter;
+								switch(obj.type){
+									case 'function':
+										html+='<div class="function block"'+(obj.documentation==undefined?'':(obj.documentation.description==undefined?'':' data-description="'+obj.documentation.description+'"')+(obj.documentation.returnType==undefined?'':' data-type="'+obj.documentation.returnType[0]+'"'))+'><span'+(fancyWordTypePlease('function'))+'>function</span>'+(obj.name==undefined?'':' <span class="function_name"'+(obj.documentation==undefined?'': 'title="'+obj.documentation.description+'"')+'>'+obj.name+'</span>');
+										
+										//documentation
+										documentedParameter={};
+											if(obj.documentation!=undefined){
+												obj.documentation.param.forEach(variable => {
+													documentedParameter[variable[2]]={type:variable[1], description:variable[3], optional:variable[0]};
+												});
+											}
+										//Parameter
+										//Function -> Parameter -> Bracket
+										parameterArr = obj.param.parts[0].contents;
+										parameter = [];
+										parameterArr.forEach(statement => {
+											let paramPart=statement.parts, documentation = documentedParameter[paramPart[0][1]];
+											paramPart.forEach((variable, index) => {
+												paramPart[index] = variable[1];
+											});
+											
+											
+											
+											//Save crypt and decrypt in storage //TODO: Make Valid-UniqueID to Function
+											varStorage[paramPart[0]]=(16*11+Math.trunc(Math.random()*16*4)).toString(16);
+											varStorage[varStorage[paramPart[0]]]=paramPart[0];
+											
+											
+											
+											
+											paramPart[0]=varStorage[paramPart[0]];
+											parameter.push('<span class="parameter"'+(documentation==undefined?' title="undocumented"':(' data-type="'+documentation.type+'" data-description="'+documentation.description+'"'+(documentation.optional?' data-isoptional="true"':'')+' title="'+documentation.description+'"'))+'>'+paramPart.join(' ')+'</span>');
+										});
+										html+=' <span class="bracket">(</span>'+parameter.join('<span class="comma">,</span> ')+'<span class="bracket">)</span><span class="bracket">{</span>'+(newLine?'<br>':'');
+										
+										html+=fancyfy(obj.statements.parts[0].contents, newLine, varStorage);
+										
+										html+='<span class="bracket">}</span></div>';
+										break;
+									case 'statement':
+										//Line of Code
+											if(newLine){
+												html+='<div class="statement">';
+											}
+										let lastPartType=undefined, word;
+										let myParts=obj.parts;
+										myParts.forEach((part, index) => {
+											if(Array.isArray(part)){
+												word=part[1];
+													if(varStorage[word]!=undefined){
+														word=varStorage[word];
+													}
+												word='<span'+(fancyWordTypePlease(word, (index>0 && myParts[index-1]!=undefined?(myParts[index-1][1]=='.'?'attribute':undefined):undefined)))+'>'+word+'</span>';
+												html+=(index==0?'':((part[0]=='operator' || lastPartType=='operator')?'':' '))+word;
+												lastPartType=part[0];
+											}else{
+												html+=fancyfy(part, newLine, varStorage);
+											}
+										});
+										html+=(newLine?'<span class="eol">;</span>':'')+(newLine?'</div>':'');
+										break;
+									case 'call':
+										html+='<span'+(fancyWordTypePlease(obj.name, 'function_name'))+'>'+obj.name+'</span>';
+										//Function -> Parameter -> Bracket
+										parameterArr = obj.param.parts[0].contents;
+										parameter = [];
+										parameterArr.forEach(statement => {
+											let paramPart=statement.parts;
+											paramPart.forEach((variable, index) => {
+												paramPart[index] = variable[1];
+											});
+												if(varStorage[paramPart[0]]!=undefined){
+													paramPart[0]=varStorage[paramPart[0]];
+												}
+											parameter.push('<span>'+paramPart.join(' ').trim()+'</span>');
+										});
+										html+='<span class="bracket">(</span>'+parameter.join('<span class="comma">,</span> ')+'<span class="bracket">)</span>';
+										break;
+									case 'bracket':
+										let endBracket=obj.endBracket;
+										html+='<span class="bracket">'+obj.bracket+'</span>'+fancyfy(obj.contents[0], false, varStorage)+'<span class="bracket">'+endBracket+'</span>';
+										break;
+									case 'definition':
+console.log('Definition', obj);
+console.log('Parts', obj.parts);
+										obj.parts.forEach((variable, index)=> {
+											if(index>0){
+												html+=' ';
+											}
+											if(Array.isArray(variable)){
+												if(index==0 && ['let','var','const'].indexOf(variable[1])>=0){
+													//Ignore
+												}else{
+													html+='<span>'+variable[1]+'</span>';
+													//Save crypt and decrypt in storage //TODO: Make Valid-UniqueID to Function
+													let hash = (16*11+Math.trunc(Math.random()*16*4)).toString(16);
+													varStorage[variable[1]]=hash;
+													varStorage[hash]=variable[1];
+												}
+											}else{
+												if(typeof variable == 'object'){
+													html+=fancyfy(variable, newLine, varStorage);
+												}else{
+													console.log(typeof variable, variable);
+													console.log(jsCodeObj, i);
+													console.log(obj);
+												}
+											}
+										});
+										break;
+									case 'variable':
+										html+='<span class="variable">'+(varStorage[obj.name]!=undefined?varStorage[obj.name]:obj.name)+'</span>';
+										break;
+									default:
+										console.log('Something Else ['+obj.type+']');
+										html=obj.toString();
+								}
+							ret+=html;
+						}
+					return ret;
+				}
+				function dom_selectElement_add(query, classString = 'selected'){
+					brackets = document.querySelectorAll(query);
+					numOfBrackets = brackets.length;
+						for(let i=0;i<numOfBrackets;i++){
+							brackets[i].classList.add(classString);
+						}
+				}
+				function dom_selectElement_remove(query, classString = 'selected'){
+					let brackets = document.querySelectorAll(query), numOfBrackets = brackets.length;
+						for(let i=0;i<numOfBrackets;i++){
+							brackets[i].classList.remove(classString);
+						}
+				}
+				function displayFile(file, successCallback){
+					const reader = new FileReader();
+					reader.onload = function(evt) {
+						let res = evt.target.result;
+						//console.log(res);
+						/*domOutput.innerHTML=fancyfy(testJS(res)[0]);
+						return;*/
+						
+						//domOutput.innerHTML=res;
+						let fileFormat = file.name.split('.');
+							switch(fileFormat[fileFormat.length-1]){
+								case 'svg':
+								case 'php': //Take this out later
+								case 'xml':
+								case 'html':
+								case 'htm':
+									res = SSE.interpreter.parse_HTML_XML(res);
+									break;
+								case 'css':
+									res = SSE.interpreter.parseCSS2(res);
+									break;
+								case 'json':
+								case 'js':
+									res = SSE.interpreter.parseJS2(res);
+									break;
+								case 'txt':
+								default:
+									//Display source
+							}
+						domOutput.innerHTML=res;
+						
+					};
+					reader.readAsBinaryString(file);
+				}
+				function setUpWebFileChooser(){
+					let importer = document.querySelector('#webImport > input[type="file"]');
+					importer.onchange=function(e){
+						displayFile(e.target.files[0]);
+					};
+					importer.focus();
+				}
+			setUpWebFileChooser();
+
+			let SSE = new SplitScreenEditor();
+			let domOutput=document.getElementById('myOutput');
+			
+			let res = 'function testFunc(){let a=function(e,f=4){return e*f;};let d;d=\'abc\'+String.fromCharCode(64);alert(\'hello\'+a(2+4*19%5,3));return false;}\n\nlet b = 5 + 3;let c=[1,2,3];c[3]=4;b = c[1];let unicode="\u15a4";let \\x61\\x62\\x63 = `a,b,${b},c`;';
+			let varSpeicher = {};
+			
+			let sseJS = new sse_abstractJS();
+			let res3 = sseJS.parse(res);
+			
+			//let res2 = fancyfy(testJS(res)[0], true, varSpeicher);
+			//res = SSE.interpreter.parseJS2(res);
+			
+			domOutput.innerHTML='<p style="word-break:break-all;">'+res3+'</p><hr>'+res;
+			//domOutput.innerHTML=res+'<hr>'+res2+'<hr><div style="word-break:break-all;">'+JSON.stringify(varSpeicher)+'</div>';
+			
+			
+			
+			let bracketSelected = false;
+			
+			domOutput.addEventListener('mousemove', function(e){
+				if(e.target.classList.contains('bracket')){
+				//TODO Quicker if a list of brackets exist instead of document.querySelectorAll
+					let bracketID = e.target.getAttribute('data-id');
+					dom_selectElement_remove('.bracket.selected');
+					dom_selectElement_add('.bracket[data-id="'+bracketID+'"]');
+					bracketSelected = true;
+				}else if(bracketSelected){
+					//Deselect bracket if selected
+					dom_selectElement_remove('.bracket.selected');
+					bracketSelected = false;
+				}
+			});
+		</script>
+	</body>
+</html>
