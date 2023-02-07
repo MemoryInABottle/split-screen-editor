@@ -6,85 +6,9 @@
 		<meta name="author" content="Mark W&ouml;rdenweber" />
 		<meta name="description" content="" />
 		<meta name="keywords" content="" />
+		<link rel="stylesheet" type="text/css" href="scanner.css">
 		<script src="interpretCode.js"></script>
 		<script src="language.js"></script>
-		<style>
-			html{box-sizing: border-box;}
-			*, *:before, *:after{box-sizing: inherit;}
-			
-			#myOutput{
-				background-color:black;
-				padding:0.8em;
-				color:white;
-				font-family:monospace;
-			}
-			#myOutput .block{
-				margin-left:1em;
-			}
-			#myOutput .statement{
-				margin-left:1em;
-			}
-			#myOutput span{
-				color:orange;
-			}
-			#myOutput span.selected{
-				background-color:green;
-			}
-			#myOutput span.bracket, #myOutput span.definition, #myOutput span.delimiter, #myOutput span.logic, #myOutput span.operator{
-				color:grey;
-			}
-			#myOutput span.number{
-				color:red;
-			}
-			#myOutput span.parameter{
-				font-style:italic;
-			}
-			#myOutput span.reservedword{
-				color:yellow;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.keyword{
-				color:yellow;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.htmlword{
-				color:lightblue;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.attribute{
-				color:red;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.variable{
-				color:pink;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.comment{
-				color:darkgreen;
-				text-shadow: 1px 1px 2px black;
-				font-style:italic;
-			}
-			#myOutput span.documentation{
-				color:purple;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.string{
-				color:lightgreen;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.regex{
-				color:blue;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.function_name{
-				color:#00D0D0;
-				text-shadow: 1px 1px 2px black;
-			}
-			#myOutput span.comma, #myOutput span.eol{ /*End Of Line*/
-				color:grey;
-				text-shadow: 1px 1px 2px black;
-			}
-		</style>
 	</head>
 	<body>
 		<div id="webImport"><input type="file" accept=".htm,.html,.js,.css,.php,.svg" /></div>
